@@ -1,36 +1,45 @@
 """
-Block Game - Gravity edition.
+Block Game - Camera scrolling edition.
 Controls: A/D = Move left/right | W or SPACE = Jump
+
+The world is larger than the screen. The camera follows the player,
+scrolling smoothly in both axes while staying clamped to world bounds.
 """
 
 import arcade
 
-# --- Constants ---
+# --- Screen ---
 SCREEN_WIDTH  = 800
 SCREEN_HEIGHT = 600
 SCREEN_TITLE  = "Block Game"
 
+# --- World size (larger than screen) ---
+WORLD_WIDTH  = 2400
+WORLD_HEIGHT = 1800
+
+# --- Physics ---
 WALL_THICKNESS = 20
 PLAYER_SIZE    = 25
 PLAYER_SPEED   = 4
 JUMP_VELOCITY  = 12
 GRAVITY        = 0.5
 
-OBSTACLE_SIZE  = 70
+# --- Camera deadzone: player must move this far from screen centre before camera shifts ---
+CAM_MARGIN_X = SCREEN_WIDTH  * 0.25
+CAM_MARGIN_Y = SCREEN_HEIGHT * 0.25
 
-# Platform dimensions
+# --- Platform ---
 PLATFORM_W = 160
 PLATFORM_H = 18
 
+# --- Colours ---
 PLAYER_COLOR   = arcade.color.CYAN
 WALL_COLOR     = arcade.color.LIGHT_GRAY
 BG_COLOR       = arcade.color.DARK_BLUE_GRAY
-OBSTACLE_COLOR = arcade.color.DARK_ORANGE
-PLATFORM_COLOR = (100, 200, 120)   # muted green
+PLATFORM_COLOR = (100, 200, 120)
 
 
 def rect_overlap(ax, ay, aw, ah, bx, by, bw, bh):
-    """Return (overlap_x, overlap_y) for two AABB rectangles (center, half-size)."""
     ox = (aw + bw) - abs(ax - bx)
     oy = (ah + bh) - abs(ay - by)
     return ox, oy
@@ -41,8 +50,12 @@ class BlockGame(arcade.Window):
         super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE)
         arcade.set_background_color(BG_COLOR)
 
-        # --- Player ---
-        self.player_x  = SCREEN_WIDTH / 2
+        # Camera offset (world coord of the bottom-left of the viewport)
+        self.cam_x = 0.0
+        self.cam_y = 0.0
+
+        # --- Player (world coords) ---
+        self.player_x  = WALL_THICKNESS + PLAYER_SIZE / 2 + 1
         self.player_y  = WALL_THICKNESS + PLAYER_SIZE / 2 + 1
         self.vel_x     = 0.0
         self.vel_y     = 0.0
@@ -52,72 +65,103 @@ class BlockGame(arcade.Window):
         self.move_left  = False
         self.move_right = False
 
-        # --- Wall inner boundaries ---
+        # --- World wall boundaries ---
         self.wall_left   = WALL_THICKNESS
-        self.wall_right  = SCREEN_WIDTH  - WALL_THICKNESS
+        self.wall_right  = WORLD_WIDTH  - WALL_THICKNESS
         self.wall_bottom = WALL_THICKNESS
-        self.wall_top    = SCREEN_HEIGHT - WALL_THICKNESS
+        self.wall_top    = WORLD_HEIGHT - WALL_THICKNESS
 
-        # --- Immovable centre obstacle ---
-        self.obstacle_x = SCREEN_WIDTH  / 2
-        self.obstacle_y = SCREEN_HEIGHT / 2
-
-        # --- Platforms (cx, cy, half_w, half_h) ---
-        # Lower-left platform
-        p1_cx = SCREEN_WIDTH * 0.25
-        p1_cy = SCREEN_HEIGHT * 0.35
-        # Upper-right platform (one step higher and to the right)
-        p2_cx = SCREEN_WIDTH * 0.62
-        p2_cy = SCREEN_HEIGHT * 0.58
+        # --- Platforms (world coords: cx, cy, half_w, half_h) ---
         hw = PLATFORM_W / 2
         hh = PLATFORM_H / 2
         self.platforms = [
-            (p1_cx, p1_cy, hw, hh),
-            (p2_cx, p2_cy, hw, hh),
+            # Lower-left
+            (WORLD_WIDTH * 0.25, WORLD_HEIGHT * 0.25, hw, hh),
+            # Upper-right (45% height, shifted left by half platform length)
+            (WORLD_WIDTH * 0.62 - PLATFORM_W * 0.5, WORLD_HEIGHT * 0.45, hw, hh),
+            # Left platform at 160 units height
+            (WORLD_WIDTH * 0.1, 160, hw, hh),
         ]
+
+        # Centre camera on player at start
+        self._update_camera()
+
+    # ------------------------------------------------------------------
+    def _update_camera(self):
+        """Scroll camera so player stays within the deadzone margins."""
+        # Desired camera so player is centred
+        target_x = self.player_x - SCREEN_WIDTH  / 2
+        target_y = self.player_y - SCREEN_HEIGHT / 2
+
+        # Only shift when player leaves the deadzone
+        left_bound   = self.cam_x + (SCREEN_WIDTH  / 2 - CAM_MARGIN_X)
+        right_bound  = self.cam_x + (SCREEN_WIDTH  / 2 + CAM_MARGIN_X)
+        bottom_bound = self.cam_y + (SCREEN_HEIGHT / 2 - CAM_MARGIN_Y)
+        top_bound    = self.cam_y + (SCREEN_HEIGHT / 2 + CAM_MARGIN_Y)
+
+        if self.player_x < left_bound:
+            self.cam_x = self.player_x - (SCREEN_WIDTH  / 2 - CAM_MARGIN_X)
+        elif self.player_x > right_bound:
+            self.cam_x = self.player_x - (SCREEN_WIDTH  / 2 + CAM_MARGIN_X)
+
+        if self.player_y < bottom_bound:
+            self.cam_y = self.player_y - (SCREEN_HEIGHT / 2 - CAM_MARGIN_Y)
+        elif self.player_y > top_bound:
+            self.cam_y = self.player_y - (SCREEN_HEIGHT / 2 + CAM_MARGIN_Y)
+
+        # Clamp camera to world bounds
+        self.cam_x = max(0, min(WORLD_WIDTH  - SCREEN_WIDTH,  self.cam_x))
+        self.cam_y = max(0, min(WORLD_HEIGHT - SCREEN_HEIGHT, self.cam_y))
+
+    def _wx(self, world_x):
+        """World X → screen X."""
+        return world_x - self.cam_x
+
+    def _wy(self, world_y):
+        """World Y → screen Y."""
+        return world_y - self.cam_y
 
     # ------------------------------------------------------------------
     def on_draw(self):
         self.clear()
 
-        # Walls
-        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, WALL_THICKNESS, WALL_COLOR)
-        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, SCREEN_HEIGHT - WALL_THICKNESS, SCREEN_HEIGHT, WALL_COLOR)
-        arcade.draw_lrbt_rectangle_filled(0, WALL_THICKNESS, 0, SCREEN_HEIGHT, WALL_COLOR)
-        arcade.draw_lrbt_rectangle_filled(SCREEN_WIDTH - WALL_THICKNESS, SCREEN_WIDTH, 0, SCREEN_HEIGHT, WALL_COLOR)
+        cx, cy = self.cam_x, self.cam_y
 
-        # Platforms
-        for (cx, cy, hw, hh) in self.platforms:
-            arcade.draw_lrbt_rectangle_filled(cx - hw, cx + hw, cy - hh, cy + hh, PLATFORM_COLOR)
-            arcade.draw_lrbt_rectangle_outline(cx - hw, cx + hw, cy - hh, cy + hh, arcade.color.WHITE, border_width=1)
-
-        # Obstacle
-        oh = OBSTACLE_SIZE / 2
+        # --- World walls ---
+        # Bottom
         arcade.draw_lrbt_rectangle_filled(
-            self.obstacle_x - oh, self.obstacle_x + oh,
-            self.obstacle_y - oh, self.obstacle_y + oh,
-            OBSTACLE_COLOR
-        )
-        arcade.draw_lrbt_rectangle_outline(
-            self.obstacle_x - oh, self.obstacle_x + oh,
-            self.obstacle_y - oh, self.obstacle_y + oh,
-            arcade.color.WHITE, border_width=2
-        )
+            self._wx(0), self._wx(WORLD_WIDTH),
+            self._wy(0), self._wy(WALL_THICKNESS),
+            WALL_COLOR)
+        # Top
+        arcade.draw_lrbt_rectangle_filled(
+            self._wx(0), self._wx(WORLD_WIDTH),
+            self._wy(WORLD_HEIGHT - WALL_THICKNESS), self._wy(WORLD_HEIGHT),
+            WALL_COLOR)
+        # Left
+        arcade.draw_lrbt_rectangle_filled(
+            self._wx(0), self._wx(WALL_THICKNESS),
+            self._wy(0), self._wy(WORLD_HEIGHT),
+            WALL_COLOR)
+        # Right
+        arcade.draw_lrbt_rectangle_filled(
+            self._wx(WORLD_WIDTH - WALL_THICKNESS), self._wx(WORLD_WIDTH),
+            self._wy(0), self._wy(WORLD_HEIGHT),
+            WALL_COLOR)
 
-        # Player
+        # --- Platforms ---
+        for (pcx, pcy, hw, hh) in self.platforms:
+            sx = self._wx(pcx); sy = self._wy(pcy)
+            arcade.draw_lrbt_rectangle_filled(sx - hw, sx + hw, sy - hh, sy + hh, PLATFORM_COLOR)
+            arcade.draw_lrbt_rectangle_outline(sx - hw, sx + hw, sy - hh, sy + hh, arcade.color.WHITE, border_width=1)
+
+        # --- Player ---
         ph = PLAYER_SIZE / 2
-        arcade.draw_lrbt_rectangle_filled(
-            self.player_x - ph, self.player_x + ph,
-            self.player_y - ph, self.player_y + ph,
-            PLAYER_COLOR
-        )
-        arcade.draw_lrbt_rectangle_outline(
-            self.player_x - ph, self.player_x + ph,
-            self.player_y - ph, self.player_y + ph,
-            arcade.color.WHITE, border_width=2
-        )
+        sx = self._wx(self.player_x); sy = self._wy(self.player_y)
+        arcade.draw_lrbt_rectangle_filled(sx - ph, sx + ph, sy - ph, sy + ph, PLAYER_COLOR)
+        arcade.draw_lrbt_rectangle_outline(sx - ph, sx + ph, sy - ph, sy + ph, arcade.color.WHITE, border_width=2)
 
-        # HUD
+        # --- HUD (fixed to screen) ---
         arcade.draw_text(
             "A/D: move   W/Space: jump",
             WALL_THICKNESS + 8,
@@ -147,7 +191,7 @@ class BlockGame(arcade.Window):
 
         self.on_ground = False
 
-        # --- Wall collisions ---
+        # --- World wall collisions ---
         if self.player_x - ph < self.wall_left:
             self.player_x = self.wall_left + ph
             self.vel_x = 0
@@ -164,47 +208,27 @@ class BlockGame(arcade.Window):
             self.player_y = self.wall_top - ph
             self.vel_y = 0
 
-        # --- Obstacle collision (AABB push-out) ---
-        oh = OBSTACLE_SIZE / 2
-        ox, oy = rect_overlap(self.player_x, self.player_y, ph, ph,
-                               self.obstacle_x, self.obstacle_y, oh, oh)
-        if ox > 0 and oy > 0:
-            if ox < oy:
-                if self.player_x < self.obstacle_x:
-                    self.player_x -= ox
-                else:
-                    self.player_x += ox
-                self.vel_x = 0
-            else:
-                if self.player_y < self.obstacle_y:
-                    self.player_y -= oy
-                    self.vel_y = 0
-                else:
-                    self.player_y += oy
-                    self.vel_y = 0
-                    self.on_ground = True
-
         # --- Platform collisions ---
-        for (cx, cy, hw, hh) in self.platforms:
+        for (pcx, pcy, hw, hh) in self.platforms:
             ox, oy = rect_overlap(self.player_x, self.player_y, ph, ph,
-                                   cx, cy, hw, hh)
+                                   pcx, pcy, hw, hh)
             if ox > 0 and oy > 0:
-                # Land on top
-                if self.vel_y <= 0 and self.player_y > cy:
+                if self.vel_y <= 0 and self.player_y > pcy:
                     self.player_y += oy
                     self.vel_y = 0
                     self.on_ground = True
-                # Bump head on underside
-                elif self.vel_y > 0 and self.player_y < cy:
+                elif self.vel_y > 0 and self.player_y < pcy:
                     self.player_y -= oy
                     self.vel_y = 0
-                # Side collision
                 elif ox < oy:
-                    if self.player_x < cx:
+                    if self.player_x < pcx:
                         self.player_x -= ox
                     else:
                         self.player_x += ox
                     self.vel_x = 0
+
+        # Update camera after all movement resolved
+        self._update_camera()
 
     # ------------------------------------------------------------------
     def on_key_press(self, key, modifiers):
