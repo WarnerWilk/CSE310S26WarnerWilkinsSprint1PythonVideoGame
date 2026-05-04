@@ -199,13 +199,20 @@ class BlockGame(arcade.Window):
                 self.vel_x = PLAYER_SPEED + self.moving_platform_vel
             else:
                 self.vel_x = self.moving_platform_vel
-        else:
+        elif self.on_ground:
             if self.move_left:
                 self.vel_x = -PLAYER_SPEED
             elif self.move_right:
                 self.vel_x = PLAYER_SPEED
             else:
                 self.vel_x = 0
+        else:
+            # Airborne: only change velocity if input
+            if self.move_left:
+                self.vel_x = -PLAYER_SPEED
+            elif self.move_right:
+                self.vel_x = PLAYER_SPEED
+            # else: keep current horizontal velocity
 
         # Gravity
         self.vel_y -= GRAVITY
