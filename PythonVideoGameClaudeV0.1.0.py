@@ -75,13 +75,21 @@ class BlockGame(arcade.Window):
         hw = PLATFORM_W / 2
         hh = PLATFORM_H / 2
         self.platforms = [
-            # Lower-left
-            (WORLD_WIDTH * 0.25, WORLD_HEIGHT * 0.25, hw, hh),
-            # Upper-right (45% height, shifted left by half platform length)
-            (WORLD_WIDTH * 0.62 - PLATFORM_W * 0.5, WORLD_HEIGHT * 0.45, hw, hh),
-            # Left platform at 160 units height
-            (WORLD_WIDTH * 0.1, 160, hw, hh),
+            # Platform 1 (leftmost) at 160 units height
+            [WORLD_WIDTH * 0.1, 160, hw, hh],
+            # Platform 2 (middle) at 200 units height
+            [WORLD_WIDTH * 0.25, 200, hw, hh],
+            # Platform 3 at 300 units height
+            [WORLD_WIDTH * 0.37, 300, hw, hh],
+            # Platform 4 (moving) at 200 units height
+            [WORLD_WIDTH * 0.5, 200, hw, hh],
         ]
+
+        # Moving platform variables
+        self.moving_platform_dir = 1  # 1 for right, -1 for left
+        self.moving_platform_speed = 1  # pixels per frame
+        self.on_moving_platform = False
+        self.moving_platform_vel = 0
 
         # Centre camera on player at start
         self._update_camera()
@@ -174,13 +182,30 @@ class BlockGame(arcade.Window):
     def on_update(self, delta_time):
         ph = PLAYER_SIZE / 2
 
+        # Update moving platform
+        moving_platform = self.platforms[3]
+        moving_platform[0] += self.moving_platform_speed * self.moving_platform_dir
+        min_x = WORLD_WIDTH * 0.5
+        max_x = WORLD_WIDTH * 0.6
+        if moving_platform[0] < min_x or moving_platform[0] > max_x:
+            self.moving_platform_dir *= -1
+            moving_platform[0] = max(min_x, min(max_x, moving_platform[0]))
+
         # Horizontal movement
-        if self.move_left:
-            self.vel_x = -PLAYER_SPEED
-        elif self.move_right:
-            self.vel_x = PLAYER_SPEED
+        if self.on_moving_platform:
+            if self.move_left:
+                self.vel_x = -PLAYER_SPEED + self.moving_platform_vel
+            elif self.move_right:
+                self.vel_x = PLAYER_SPEED + self.moving_platform_vel
+            else:
+                self.vel_x = self.moving_platform_vel
         else:
-            self.vel_x = 0
+            if self.move_left:
+                self.vel_x = -PLAYER_SPEED
+            elif self.move_right:
+                self.vel_x = PLAYER_SPEED
+            else:
+                self.vel_x = 0
 
         # Gravity
         self.vel_y -= GRAVITY
@@ -209,7 +234,9 @@ class BlockGame(arcade.Window):
             self.vel_y = 0
 
         # --- Platform collisions ---
-        for (pcx, pcy, hw, hh) in self.platforms:
+        self.on_moving_platform = False  # Reset flag
+        for i, platform in enumerate(self.platforms):
+            pcx, pcy, hw, hh = platform[0], platform[1], platform[2], platform[3]
             ox, oy = rect_overlap(self.player_x, self.player_y, ph, ph,
                                    pcx, pcy, hw, hh)
             if ox > 0 and oy > 0:
@@ -217,6 +244,10 @@ class BlockGame(arcade.Window):
                     self.player_y += oy
                     self.vel_y = 0
                     self.on_ground = True
+                    # If on moving platform, set flag and velocity
+                    if i == 3:
+                        self.on_moving_platform = True
+                        self.moving_platform_vel = self.moving_platform_speed * self.moving_platform_dir
                 elif self.vel_y > 0 and self.player_y < pcy:
                     self.player_y -= oy
                     self.vel_y = 0
