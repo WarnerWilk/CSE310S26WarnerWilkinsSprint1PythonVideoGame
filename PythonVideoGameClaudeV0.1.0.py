@@ -23,6 +23,7 @@ PLAYER_SIZE    = 25
 PLAYER_SPEED   = 4
 JUMP_VELOCITY  = 12
 GRAVITY        = 0.5
+FRICTION       = 0.3
 
 # --- Camera deadzone: player must move this far from screen centre before camera shifts ---
 CAM_MARGIN_X = SCREEN_WIDTH  * 0.25
@@ -31,6 +32,10 @@ CAM_MARGIN_Y = SCREEN_HEIGHT * 0.25
 # --- Platform ---
 PLATFORM_W = 160
 PLATFORM_H = 18
+
+# --- Movable block ---
+BOX_SIZE  = 28
+BOX_COLOR = arcade.color.ORANGE
 
 # --- Colours ---
 PLAYER_COLOR   = arcade.color.CYAN
@@ -90,6 +95,14 @@ class BlockGame(arcade.Window):
         self.moving_platform_speed = 1  # pixels per frame
         self.on_moving_platform = False
         self.moving_platform_vel = 0
+
+        # Movable box
+        self.box_x = WORLD_WIDTH * 0.4
+        self.box_y = WALL_THICKNESS + BOX_SIZE / 2 + 1
+        self.box_vel_x = 0.0
+        self.box_vel_y = 0.0
+        self.box_on_ground = False
+        self.carrying_box = False
 
         # Centre camera on player at start
         self._update_camera()
@@ -163,6 +176,12 @@ class BlockGame(arcade.Window):
             arcade.draw_lrbt_rectangle_filled(sx - hw, sx + hw, sy - hh, sy + hh, PLATFORM_COLOR)
             arcade.draw_lrbt_rectangle_outline(sx - hw, sx + hw, sy - hh, sy + hh, arcade.color.WHITE, border_width=1)
 
+        # --- Movable box ---
+        bh = BOX_SIZE / 2
+        bx = self._wx(self.box_x); by = self._wy(self.box_y)
+        arcade.draw_lrbt_rectangle_filled(bx - bh, bx + bh, by - bh, by + bh, BOX_COLOR)
+        arcade.draw_lrbt_rectangle_outline(bx - bh, bx + bh, by - bh, by + bh, arcade.color.WHITE, border_width=2)
+
         # --- Player ---
         ph = PLAYER_SIZE / 2
         sx = self._wx(self.player_x); sy = self._wy(self.player_y)
@@ -205,7 +224,12 @@ class BlockGame(arcade.Window):
             elif self.move_right:
                 self.vel_x = PLAYER_SPEED
             else:
-                self.vel_x = 0
+                if abs(self.vel_x) <= FRICTION:
+                    self.vel_x = 0
+                elif self.vel_x > 0:
+                    self.vel_x -= FRICTION
+                else:
+                    self.vel_x += FRICTION
         else:
             # Airborne: only change velocity if input
             if self.move_left:
@@ -220,6 +244,20 @@ class BlockGame(arcade.Window):
         # Apply velocity
         self.player_x += self.vel_x
         self.player_y += self.vel_y
+
+        # Movable box physics / carrying
+        bh = BOX_SIZE / 2
+        if self.carrying_box:
+            self.box_x = self.player_x
+            self.box_y = self.player_y + ph + bh + 1
+            self.box_vel_x = 0
+            self.box_vel_y = 0
+            self.box_on_ground = False
+        else:
+            self.box_vel_y -= GRAVITY
+            self.box_x += self.box_vel_x
+            self.box_y += self.box_vel_y
+            self.box_on_ground = False
 
         self.on_ground = False
 
@@ -239,6 +277,23 @@ class BlockGame(arcade.Window):
         if self.player_y + ph > self.wall_top:
             self.player_y = self.wall_top - ph
             self.vel_y = 0
+
+        # --- Box world collisions ---
+        if self.box_x - bh < self.wall_left:
+            self.box_x = self.wall_left + bh
+            self.box_vel_x = 0
+        elif self.box_x + bh > self.wall_right:
+            self.box_x = self.wall_right - bh
+            self.box_vel_x = 0
+
+        if self.box_y - bh < self.wall_bottom:
+            self.box_y = self.wall_bottom + bh
+            self.box_vel_y = 0
+            self.box_on_ground = True
+
+        if self.box_y + bh > self.wall_top:
+            self.box_y = self.wall_top - bh
+            self.box_vel_y = 0
 
         # --- Platform collisions ---
         self.on_moving_platform = False  # Reset flag
@@ -265,6 +320,55 @@ class BlockGame(arcade.Window):
                         self.player_x += ox
                     self.vel_x = 0
 
+            # Box collisions with platforms
+            box_ox, box_oy = rect_overlap(self.box_x, self.box_y, bh, bh,
+                                          pcx, pcy, hw, hh)
+            if box_ox > 0 and box_oy > 0:
+                if self.box_vel_y <= 0 and self.box_y > pcy:
+                    self.box_y += box_oy
+                    self.box_vel_y = 0
+                    self.box_on_ground = True
+                elif self.box_vel_y > 0 and self.box_y < pcy:
+                    self.box_y -= box_oy
+                    self.box_vel_y = 0
+                elif box_ox < box_oy:
+                    if self.box_x < pcx:
+                        self.box_x -= box_ox
+                    else:
+                        self.box_x += box_ox
+                    self.box_vel_x = 0
+
+        if self.box_on_ground and not self.carrying_box:
+            if abs(self.box_vel_x) <= FRICTION:
+                self.box_vel_x = 0
+            elif self.box_vel_x > 0:
+                self.box_vel_x -= FRICTION
+            else:
+                self.box_vel_x += FRICTION
+
+        # --- Player / box collision ---
+        if not self.carrying_box:
+            box_ox, box_oy = rect_overlap(self.player_x, self.player_y, ph, ph,
+                                          self.box_x, self.box_y, bh, bh)
+            if box_ox > 0 and box_oy > 0:
+                if self.vel_y <= 0 and self.player_y > self.box_y:
+                    self.player_y += box_oy
+                    self.vel_y = 0
+                    self.on_ground = True
+                    # carry the block when standing on it
+                    self.box_x += self.vel_x * 0.1
+                elif self.vel_y > 0 and self.player_y < self.box_y:
+                    self.player_y -= box_oy
+                    self.vel_y = 0
+                elif box_ox < box_oy:
+                    if self.player_x < self.box_x:
+                        self.player_x -= box_ox
+                        self.box_vel_x = self.vel_x
+                    else:
+                        self.player_x += box_ox
+                        self.box_vel_x = self.vel_x
+                    self.vel_x = 0
+
         # Update camera after all movement resolved
         self._update_camera()
 
@@ -277,6 +381,17 @@ class BlockGame(arcade.Window):
         elif key in (arcade.key.W, arcade.key.SPACE):
             if self.on_ground:
                 self.vel_y = JUMP_VELOCITY
+        elif key == arcade.key.P:
+            if self.carrying_box:
+                self.carrying_box = False
+                self.box_vel_x = self.vel_x
+                self.box_vel_y = 0
+            else:
+                close_enough = abs(self.player_x - self.box_x) < PLAYER_SIZE + BOX_SIZE and abs(self.player_y - self.box_y) < PLAYER_SIZE + BOX_SIZE
+                if close_enough and self.box_on_ground:
+                    self.carrying_box = True
+                    self.box_vel_x = 0
+                    self.box_vel_y = 0
 
     def on_key_release(self, key, modifiers):
         if key == arcade.key.A:
