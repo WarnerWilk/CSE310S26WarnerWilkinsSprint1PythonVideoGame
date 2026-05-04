@@ -229,10 +229,7 @@ class BlockGame(arcade.Window):
                 moving_platform[0] = max(min_x, min(max_x, moving_platform[0]))
 
         # Horizontal movement
-        if self.rewinding:
-            self.vel_x = 0
-            self.vel_y = 0
-        elif self.on_moving_platform:
+        if self.on_moving_platform:
             if self.move_left:
                 self.vel_x = -PLAYER_SPEED + self.moving_platform_vel
             elif self.move_right:
@@ -259,13 +256,12 @@ class BlockGame(arcade.Window):
                 self.vel_x = PLAYER_SPEED
             # else: keep current horizontal velocity
 
-        if not self.rewinding:
-            # Gravity
-            self.vel_y -= GRAVITY
+        # Gravity
+        self.vel_y -= GRAVITY
 
-            # Apply velocity
-            self.player_x += self.vel_x
-            self.player_y += self.vel_y
+        # Apply velocity
+        self.player_x += self.vel_x
+        self.player_y += self.vel_y
 
         # Movable box physics / carrying / rewind
         bh = BOX_SIZE / 2
