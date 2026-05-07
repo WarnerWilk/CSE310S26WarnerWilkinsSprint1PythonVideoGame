@@ -33,6 +33,8 @@ VP_Y = SCREEN_H / 2          # vanishing point Y — matches vortex centre
 ENEMY_DEPTH_SPEED = 0.004     # how fast depth grows per frame (~250 frames to arrive)
 ENEMY_MIN_SCALE   = 0.04      # size at vanishing point
 ENEMY_MAX_SCALE   = 1.0       # size when depth == 1 (at player plane)
+PATROL_DEPTH  = 0.82    # depth at which enemies stop approaching and start patrolling
+PATROL_STEER  = 0.025   # lerp speed toward patrol target (normalised space)
 BULLET_DEPTH_SPEED = 0.06     # bullets travel "into" the screen fast
 
 # ── Colours ───────────────────────────────────────────────────────────────────
@@ -329,6 +331,11 @@ class Enemy:
         base_cd    = max(0.8, 3.5 - (wave - 1) * 0.18)
         self.shoot_cd = random.uniform(base_cd * 0.5, base_cd)
         self.wave  = wave   # store for use in maybe_shoot
+        # Patrol state — ships switch to this once close enough
+        self.patrolling = False
+        self.target_nx  = self.nx
+        self.target_ny  = self.ny
+        self.patrol_cd  = 0.0
         # Dalek deployment — saucers drop individual Daleks when close enough
         self.deploy_cd = random.uniform(4.0, 8.0)
         self.deployed  = 0    # how many Daleks this saucer has dropped
@@ -360,13 +367,32 @@ class Enemy:
             return EnemyBullet(self.sx, self.sy, target_x, target_y, speed)
         return None
 
-    def update(self):
-        self.depth += self.depth_speed
-        # Drift outward as they approach (spread from centre)
-        self.nx += self.dnx * (1 + self.depth * 2)
-        self.ny += self.dny * (1 + self.depth * 2)
-        if self.depth >= 1.0:
-            self.alive = False   # passed the player plane
+    def _new_patrol_target(self, player_nx, player_ny):
+        """Pick a random firing position offset from the player in normalised space."""
+        angle  = random.uniform(0, math.pi * 2)
+        radius = random.uniform(0.12, 0.30)
+        self.target_nx = max(0.05, min(0.95, player_nx + math.cos(angle) * radius))
+        self.target_ny = max(0.05, min(0.95, player_ny + math.sin(angle) * radius * 0.7))
+        self.patrol_cd = random.uniform(2.5, 5.0)   # how long to stay at this spot
+
+    def update(self, player_nx=0.5, player_ny=0.5):
+        if not self.patrolling:
+            self.depth += self.depth_speed
+            # Drift outward as they approach (spread from centre)
+            self.nx += self.dnx * (1 + self.depth * 2)
+            self.ny += self.dny * (1 + self.depth * 2)
+            if self.depth >= PATROL_DEPTH:
+                self.patrolling = True
+                self.depth      = PATROL_DEPTH
+                self._new_patrol_target(player_nx, player_ny)
+        else:
+            # Smoothly steer toward current patrol target
+            self.nx += (self.target_nx - self.nx) * PATROL_STEER
+            self.ny += (self.target_ny - self.ny) * PATROL_STEER
+            # Count down to picking a new position
+            self.patrol_cd -= 1 / 60
+            if self.patrol_cd <= 0:
+                self._new_patrol_target(player_nx, player_ny)
 
     def draw(self):
         sx, sy, scale = project(self.nx, self.ny, self.depth)
@@ -430,6 +456,18 @@ class Dalek:
         self.wave     = wave
         # Dalek gun arm angle oscillates for visual flair
         self.gun_angle = random.uniform(0, math.pi * 2)
+        # Patrol state
+        self.patrolling = False
+        self.target_nx  = self.nx
+        self.target_ny  = self.ny
+        self.patrol_cd  = 0.0
+
+    def _new_patrol_target(self, player_nx, player_ny):
+        angle  = random.uniform(0, math.pi * 2)
+        radius = random.uniform(0.10, 0.25)
+        self.target_nx = max(0.05, min(0.95, player_nx + math.cos(angle) * radius))
+        self.target_ny = max(0.05, min(0.95, player_ny + math.sin(angle) * radius * 0.7))
+        self.patrol_cd = random.uniform(1.5, 3.5)   # daleks reposition faster
 
     def maybe_shoot(self, target_x, target_y):
         if self.depth < 0.28 or self.scale < 0.20:
@@ -442,13 +480,24 @@ class Dalek:
             return EnemyBullet(self.sx, self.sy, target_x, target_y, speed)
         return None
 
-    def update(self):
-        self.depth += self.depth_speed
-        self.nx += self.dnx * (1 + self.depth * 2)
-        self.ny += self.dny * (1 + self.depth * 2)
-        self.gun_angle += 0.06   # slowly rotate gun arm
-        if self.depth >= 1.0:
-            self.alive = False
+    def update(self, player_nx=0.5, player_ny=0.5):
+        self.gun_angle += 0.06
+        if not self.patrolling:
+            self.depth += self.depth_speed
+            self.nx += self.dnx * (1 + self.depth * 2)
+            self.ny += self.dny * (1 + self.depth * 2)
+            if self.depth >= PATROL_DEPTH:
+                self.patrolling = True
+                self.depth      = PATROL_DEPTH
+                self._new_patrol_target(player_nx, player_ny)
+        else:
+            # Daleks steer slightly faster/jerkier than saucers
+            steer = PATROL_STEER * 1.4
+            self.nx += (self.target_nx - self.nx) * steer
+            self.ny += (self.target_ny - self.ny) * steer
+            self.patrol_cd -= 1 / 60
+            if self.patrol_cd <= 0:
+                self._new_patrol_target(player_nx, player_ny)
 
     def draw(self):
         sx, sy, scale = project(self.nx, self.ny, self.depth)
@@ -554,6 +603,19 @@ class Cyberman:
         # Rotation for the geometric ship shape
         self.rot      = random.uniform(0, math.pi * 2)
         self.rot_vel  = random.choice([-1, 1]) * random.uniform(0.008, 0.022)
+        # Patrol state
+        self.patrolling = False
+        self.target_nx  = self.nx
+        self.target_ny  = self.ny
+        self.patrol_cd  = 0.0
+
+    def _new_patrol_target(self, player_nx, player_ny):
+        # Cybermen keep more distance — orbit further out
+        angle  = random.uniform(0, math.pi * 2)
+        radius = random.uniform(0.18, 0.35)
+        self.target_nx = max(0.05, min(0.95, player_nx + math.cos(angle) * radius))
+        self.target_ny = max(0.05, min(0.95, player_ny + math.sin(angle) * radius * 0.7))
+        self.patrol_cd = random.uniform(3.0, 6.0)   # cybermen reposition slowly
 
     def maybe_shoot(self, target_x, target_y):
         if self.depth < 0.25 or self.scale < 0.18:
@@ -570,13 +632,24 @@ class Cyberman:
             return bullet
         return None
 
-    def update(self):
-        self.depth   += self.depth_speed
-        self.nx      += self.dnx * (1 + self.depth * 1.5)
-        self.ny      += self.dny * (1 + self.depth * 1.5)
-        self.rot     += self.rot_vel
-        if self.depth >= 1.0:
-            self.alive = False
+    def update(self, player_nx=0.5, player_ny=0.5):
+        self.rot += self.rot_vel
+        if not self.patrolling:
+            self.depth   += self.depth_speed
+            self.nx      += self.dnx * (1 + self.depth * 1.5)
+            self.ny      += self.dny * (1 + self.depth * 1.5)
+            if self.depth >= PATROL_DEPTH:
+                self.patrolling = True
+                self.depth      = PATROL_DEPTH
+                self._new_patrol_target(player_nx, player_ny)
+        else:
+            # Cybermen glide smoothly — lowest steer rate of all three
+            steer = PATROL_STEER * 0.7
+            self.nx += (self.target_nx - self.nx) * steer
+            self.ny += (self.target_ny - self.ny) * steer
+            self.patrol_cd -= 1 / 60
+            if self.patrol_cd <= 0:
+                self._new_patrol_target(player_nx, player_ny)
 
     def draw(self):
         sx, sy, scale = project(self.nx, self.ny, self.depth)
@@ -780,13 +853,17 @@ class GameWindow(arcade.Window):
             cyber_interval   = max(1.2, 5.0 - (self.wave - 3) * 0.3)
             self.cyber_timer = cyber_interval
 
-        for e in self.enemies: e.update()
+        # Compute player normalised position once for enemy steering
+        pnx = self.player.x / SCREEN_W
+        pny = self.player.y / SCREEN_H
+
+        for e in self.enemies: e.update(pnx, pny)
         self.enemies = [e for e in self.enemies if e.alive]
 
-        for d in self.daleks: d.update()
+        for d in self.daleks: d.update(pnx, pny)
         self.daleks = [d for d in self.daleks if d.alive]
 
-        for cy in self.cybermen: cy.update()
+        for cy in self.cybermen: cy.update(pnx, pny)
         self.cybermen = [cy for cy in self.cybermen if cy.alive]
 
         # Enemy shooting (saucers)
