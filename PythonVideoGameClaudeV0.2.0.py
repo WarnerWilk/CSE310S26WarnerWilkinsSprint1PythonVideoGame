@@ -278,13 +278,14 @@ class EnemyBullet:
     def __init__(self, sx, sy, target_x, target_y, speed=4.5):
         self.sx    = sx
         self.sy    = sy
-        # Direction vector toward player screen position
         dx = target_x - sx
         dy = target_y - sy
         dist = math.hypot(dx, dy) or 1
         self.vx    = (dx / dist) * speed
         self.vy    = (dy / dist) * speed
         self.alive = True
+        self.colour     = (220, 80,  20)   # default orange (Dalek)
+        self.colour_dim = (255, 200, 80)
 
     def update(self):
         self.sx += self.vx
@@ -294,8 +295,8 @@ class EnemyBullet:
             self.alive = False
 
     def draw(self):
-        arcade.draw_circle_filled(self.sx, self.sy, self.BASE_R,       (220, 80, 20))
-        arcade.draw_circle_filled(self.sx, self.sy, self.BASE_R * 0.5, (255, 200, 80))
+        arcade.draw_circle_filled(self.sx, self.sy, self.BASE_R,       self.colour)
+        arcade.draw_circle_filled(self.sx, self.sy, self.BASE_R * 0.5, self.colour_dim)
 
     def rect(self):
         r = self.BASE_R
@@ -328,6 +329,21 @@ class Enemy:
         base_cd    = max(0.8, 3.5 - (wave - 1) * 0.18)
         self.shoot_cd = random.uniform(base_cd * 0.5, base_cd)
         self.wave  = wave   # store for use in maybe_shoot
+        # Dalek deployment — saucers drop individual Daleks when close enough
+        self.deploy_cd = random.uniform(4.0, 8.0)
+        self.deployed  = 0    # how many Daleks this saucer has dropped
+
+    def maybe_deploy(self):
+        """Return a Dalek spawned at this saucer's position, or None."""
+        if self.depth < 0.30 or self.deployed >= 2:
+            return None
+        self.deploy_cd -= 1 / 60
+        if self.deploy_cd <= 0:
+            self.deploy_cd = random.uniform(5.0, 9.0)
+            self.deployed += 1
+            return Dalek(self.wave, spawn_nx=self.nx, spawn_ny=self.ny,
+                         spawn_depth=self.depth)
+        return None
 
     def maybe_shoot(self, target_x, target_y):
         """Return an EnemyBullet if ready to fire, else None."""
@@ -395,13 +411,14 @@ class Dalek:
     # Daleks are narrower and taller than saucers
     BASE_W, BASE_H = 18, 30
 
-    def __init__(self, wave=1):
-        self.nx    = random.uniform(0.25, 0.75)
-        self.ny    = random.uniform(0.35, 0.65)
+    def __init__(self, wave=1, spawn_nx=None, spawn_ny=None, spawn_depth=None):
+        # Spawn at saucer position if provided, otherwise default (unused now)
+        self.nx    = spawn_nx if spawn_nx is not None else 0.5
+        self.ny    = spawn_ny if spawn_ny is not None else 0.5
         # Daleks weave more erratically than saucers
         self.dnx   = random.uniform(-0.0014, 0.0014)
         self.dny   = random.uniform(-0.0006, 0.0004)
-        self.depth = 0.0
+        self.depth = spawn_depth if spawn_depth is not None else 0.0
         wave_mult  = 1 + (wave - 1) * 0.10
         # Daleks approach slightly slower than saucers — they strafe more
         self.depth_speed = ENEMY_DEPTH_SPEED * random.uniform(0.7, 1.1) * wave_mult
@@ -509,6 +526,108 @@ class Dalek:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Enemy — Cyberman Ship (emerges from vortex centre, geometric/angular)
+# ─────────────────────────────────────────────────────────────────────────────
+C_CYBER_SILVER = (160, 175, 190)
+C_CYBER_DARK   = ( 50,  60,  70)
+C_CYBER_GLOW   = ( 80, 200, 220)   # cold blue-green glow
+
+class Cyberman:
+    BASE_W, BASE_H = 30, 30
+
+    def __init__(self, wave=1):
+        # Always spawns very close to the vortex centre
+        self.nx    = random.uniform(0.44, 0.56)
+        self.ny    = random.uniform(0.44, 0.56)
+        # Drift outward slowly — they creep toward the player
+        self.dnx   = random.uniform(-0.0006, 0.0006)
+        self.dny   = random.uniform(-0.0003, 0.0003)
+        self.depth = 0.0
+        wave_mult  = 1 + (wave - 1) * 0.09
+        self.depth_speed = ENEMY_DEPTH_SPEED * random.uniform(0.6, 0.95) * wave_mult
+        self.alive = True
+        self.sx, self.sy, self.scale = VP_X, VP_Y, ENEMY_MIN_SCALE
+        # Cybermen fire less frequently but their shots are faster
+        base_cd       = max(0.9, 3.8 - (wave - 1) * 0.16)
+        self.shoot_cd = random.uniform(base_cd * 0.6, base_cd)
+        self.wave     = wave
+        # Rotation for the geometric ship shape
+        self.rot      = random.uniform(0, math.pi * 2)
+        self.rot_vel  = random.choice([-1, 1]) * random.uniform(0.008, 0.022)
+
+    def maybe_shoot(self, target_x, target_y):
+        if self.depth < 0.25 or self.scale < 0.18:
+            return None
+        self.shoot_cd -= 1 / 60
+        if self.shoot_cd <= 0:
+            base_cd = max(0.6, 3.2 - (self.wave - 1) * 0.14)
+            self.shoot_cd = random.uniform(base_cd * 0.7, base_cd) * (1.0 - self.depth * 0.35)
+            # Cyberman shots are fast and blue-green
+            speed = (5.5 + self.depth * 4.0) + (self.wave - 1) * 0.5
+            bullet = EnemyBullet(self.sx, self.sy, target_x, target_y, speed)
+            bullet.colour     = C_CYBER_GLOW          # override colour
+            bullet.colour_dim = (40, 120, 140)
+            return bullet
+        return None
+
+    def update(self):
+        self.depth   += self.depth_speed
+        self.nx      += self.dnx * (1 + self.depth * 1.5)
+        self.ny      += self.dny * (1 + self.depth * 1.5)
+        self.rot     += self.rot_vel
+        if self.depth >= 1.0:
+            self.alive = False
+
+    def draw(self):
+        sx, sy, scale = project(self.nx, self.ny, self.depth)
+        self.sx, self.sy, self.scale = sx, sy, scale
+
+        brightness = min(255, int(255 * (self.depth / 0.12)))
+        def c(col): return tuple(int(x * brightness / 255) for x in col)
+
+        r   = self.rot
+        s   = scale
+        hw  = self.BASE_W * s * 0.5
+        hh  = self.BASE_H * s * 0.5
+
+        def rv(px, py):
+            """Rotate a point around (sx, sy)."""
+            cr, sr = math.cos(r), math.sin(r)
+            return (sx + px * cr - py * sr,
+                    sy + px * sr + py * cr)
+
+        # Outer hexagonal hull
+        hex_pts = [rv(math.cos(math.pi/2 + i*math.pi/3) * hw * 1.1,
+                      math.sin(math.pi/2 + i*math.pi/3) * hh * 1.1)
+                   for i in range(6)]
+        arcade.draw_polygon_filled(hex_pts, c(C_CYBER_DARK))
+        arcade.draw_polygon_outline(hex_pts, c(C_CYBER_SILVER), max(1, int(2*s)))
+
+        # Inner diamond
+        diamond = [rv(0, hh*0.55), rv(hw*0.55, 0),
+                   rv(0, -hh*0.55), rv(-hw*0.55, 0)]
+        arcade.draw_polygon_filled(diamond, c(C_CYBER_SILVER))
+
+        # Centre glow eye
+        if scale > 0.12:
+            eye_r = max(1.5, 5 * s)
+            arcade.draw_circle_filled(sx, sy, eye_r, c(C_CYBER_GLOW))
+            if scale > 0.22:
+                arcade.draw_circle_filled(sx, sy, eye_r * 0.45, (200, 255, 255))
+
+        # Four angular struts from centre to hull corners
+        if scale > 0.20:
+            for i in [0, 1, 3, 4]:
+                pt = hex_pts[i]
+                arcade.draw_line(sx, sy, pt[0], pt[1],
+                                 c(C_CYBER_SILVER), max(1, int(s * 1.5)))
+
+    def rect(self):
+        r = self.BASE_W * self.scale * 0.9
+        return (self.sx - r, self.sy - r, self.sx + r, self.sy + r)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Particles
 # ─────────────────────────────────────────────────────────────────────────────
 class Particle:
@@ -584,6 +703,7 @@ class GameWindow(arcade.Window):
         self.bullets       = []
         self.enemies       = []
         self.daleks        = []
+        self.cybermen      = []
         self.enemy_bullets = []
         self.particles     = []
         self.score         = 0
@@ -591,6 +711,7 @@ class GameWindow(arcade.Window):
         self.wave          = 1
         self.spawn_timer   = 0.0
         self.dalek_timer   = 2.5
+        self.cyber_timer   = 5.0
         self.wave_kills    = 0
         self.wave_target   = 8
         self.shoot_cd      = 0.0
@@ -645,18 +766,28 @@ class GameWindow(arcade.Window):
             self.enemies.append(Enemy(self.wave))
             self.spawn_timer = max(0.5, ENEMY_SPAWN_INTERVAL * (0.92 ** (self.wave - 1)))
 
-        # Spawn individual Daleks from wave 2 onward; more frequent at higher waves
-        self.dalek_timer -= dt
-        if self.wave >= 2 and self.dalek_timer <= 0 and len(self.daleks) < MAX_ENEMIES:
-            self.daleks.append(Dalek(self.wave))
-            dalek_interval = max(0.8, 3.5 - (self.wave - 2) * 0.25)
-            self.dalek_timer = dalek_interval
+        # Saucers deploy individual Daleks from their position (wave 2+)
+        if self.wave >= 2:
+            for e in self.enemies:
+                dalek = e.maybe_deploy()
+                if dalek and len(self.daleks) < MAX_ENEMIES:
+                    self.daleks.append(dalek)
+
+        # Cybermen ships emerge from the vortex centre (wave 3+)
+        self.cyber_timer -= dt
+        if self.wave >= 3 and self.cyber_timer <= 0 and len(self.cybermen) < MAX_ENEMIES:
+            self.cybermen.append(Cyberman(self.wave))
+            cyber_interval   = max(1.2, 5.0 - (self.wave - 3) * 0.3)
+            self.cyber_timer = cyber_interval
 
         for e in self.enemies: e.update()
         self.enemies = [e for e in self.enemies if e.alive]
 
         for d in self.daleks: d.update()
         self.daleks = [d for d in self.daleks if d.alive]
+
+        for cy in self.cybermen: cy.update()
+        self.cybermen = [cy for cy in self.cybermen if cy.alive]
 
         # Enemy shooting (saucers)
         for e in self.enemies:
@@ -667,6 +798,12 @@ class GameWindow(arcade.Window):
         # Dalek shooting (faster rate)
         for d in self.daleks:
             shot = d.maybe_shoot(self.player.x, self.player.y)
+            if shot:
+                self.enemy_bullets.append(shot)
+
+        # Cyberman shooting (fast bullets, less frequent)
+        for cy in self.cybermen:
+            shot = cy.maybe_shoot(self.player.x, self.player.y)
             if shot:
                 self.enemy_bullets.append(shot)
 
@@ -695,6 +832,18 @@ class GameWindow(arcade.Window):
                     self.wave_kills += 1
                     self.particles  += explode(d.sx, d.sy,
                         [C_DALEK_GOLD, C_RED, (255, 160, 20), C_WHITE])
+                    break
+
+        # Bullet ↔ cyberman
+        for b in self.bullets[:]:
+            for cy in self.cybermen[:]:
+                if b.alive and cy.alive and rects_overlap(b.rect(), cy.rect()):
+                    b.alive  = False
+                    cy.alive = False
+                    self.score      += 200 * self.wave
+                    self.wave_kills += 1
+                    self.particles  += explode(cy.sx, cy.sy,
+                        [C_CYBER_SILVER, C_CYBER_GLOW, C_CYBER_DARK, C_WHITE])
                     break
 
         # Enemy ↔ player (collision)
@@ -745,6 +894,22 @@ class GameWindow(arcade.Window):
                         self.flash("REGENERATING...", 2.0, C_TEXT_GOLD)
                     break
 
+        # Cyberman ↔ player (collision)
+        if self.player.invuln == 0:
+            pr = self.player.rect()
+            for cy in self.cybermen[:]:
+                if rects_overlap(pr, cy.rect()):
+                    cy.alive = False
+                    self.particles += explode(self.player.x, self.player.y,
+                        [C_TARDIS_BLUE, C_CYBER_GLOW, C_WHITE], n=40)
+                    self.lives -= 1
+                    if self.lives <= 0:
+                        self.state = "game_over"
+                    else:
+                        self.player.invuln = 120
+                        self.flash("REGENERATING...", 2.0, C_TEXT_GOLD)
+                    break
+
         # Wave advance
         if self.wave_kills >= self.wave_target:
             self.wave          += 1
@@ -777,7 +942,8 @@ class GameWindow(arcade.Window):
         for p in self.particles: p.draw()
         for b in self.bullets:   b.draw()
         for eb in self.enemy_bullets: eb.draw()
-        all_enemies = sorted(self.enemies + self.daleks, key=lambda e: e.depth)
+        all_enemies = sorted(self.enemies + self.daleks + self.cybermen,
+                             key=lambda e: e.depth)
         for e in all_enemies:
             e.draw()
         self.player.draw()
