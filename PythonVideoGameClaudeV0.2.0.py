@@ -149,6 +149,12 @@ class Player:
         self.dx     = 0
         self.dy     = 0
         self.invuln = 0
+        # Cosmetic tumble state
+        self.roll        = 0.0    # side-to-side lean (radians), driven by dx
+        self.pitch       = 0.0    # forward/back tilt, driven by dy
+        self.wobble      = 0.0    # continuous idle wobble phase
+        self.spin        = 0.0    # accumulated spin angle — kicks in on sharp moves
+        self.spin_vel    = 0.0    # current spin velocity
 
     def update(self):
         self.x = max(self.W // 2, min(SCREEN_W - self.W // 2, self.x + self.dx))
@@ -156,20 +162,74 @@ class Player:
         if self.invuln > 0:
             self.invuln -= 1
 
+        # Roll tracks horizontal input — lean into the turn
+        target_roll = math.radians(-self.dx * 2.2)
+        self.roll += (target_roll - self.roll) * 0.12
+
+        # Pitch tracks vertical input — nose up/down
+        target_pitch = math.radians(self.dy * 1.4)
+        self.pitch += (target_pitch - self.pitch) * 0.10
+
+        # Spin — moving diagonally or changing direction rapidly kicks a spin
+        input_magnitude = math.hypot(self.dx, self.dy)
+        if input_magnitude > PLAYER_SPEED * 1.3:   # diagonal movement
+            self.spin_vel += 0.008
+        # Spin decays slowly so it feels like real angular momentum
+        self.spin_vel *= 0.97
+        self.spin     += self.spin_vel
+
+        # Idle wobble — the TARDIS is never perfectly still
+        self.wobble += 0.04
+
     def draw(self):
         if self.invuln > 0 and (self.invuln // 4) % 2 == 0:
             return
+
         x, y = self.x, self.y
-        hh   = self.H // 2
-        draw_rect_filled(x, y, self.W, self.H, C_TARDIS_BLUE)
-        draw_rect_outline(x, y, self.W, self.H, C_TARDIS_LIGHT, 2)
-        draw_rect_filled(x - 6, y + 6, 7, 9, C_TARDIS_LIGHT)
-        draw_rect_filled(x + 6, y + 6, 7, 9, C_TARDIS_LIGHT)
-        arcade.draw_line(x, y - hh + 4, x, y + hh - 12, C_TARDIS_LIGHT, 1)
-        draw_rect_filled(x, y + hh + 5, 6, 8, C_TARDIS_LIGHT)
-        arcade.draw_circle_filled(x, y + hh + 10, 4, (220, 240, 255))
+
+        # Combine all rotation angles for the final transform
+        idle   = math.sin(self.wobble) * 0.055 + math.sin(self.wobble * 0.7) * 0.03
+        angle  = self.roll + idle + self.spin   # total Z rotation
+        tilt_x = math.sin(self.pitch) * 5       # pseudo-X tilt shifts geometry
+
+        # Build the box corners then rotate them around the centre
+        hw, hh = self.W / 2, self.H / 2
+        corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+        def rot(px, py):
+            c, s = math.cos(angle), math.sin(angle)
+            return (x + tilt_x + px * c - py * s,
+                    y         + px * s + py * c)
+
+        bl, br, tr, tl = [rot(px, py) for px, py in corners]
+
+        # Main box face
+        arcade.draw_polygon_filled([bl, br, tr, tl], C_TARDIS_BLUE)
+        arcade.draw_polygon_outline([bl, br, tr, tl], C_TARDIS_LIGHT, 2)
+
+        # Windows — rotated with the box
+        def rot_rect(cx, cy, w, h):
+            """Return 4 rotated corners of a small rectangle."""
+            hw2, hh2 = w / 2, h / 2
+            pts = [(-hw2, -hh2), (hw2, -hh2), (hw2, hh2), (-hw2, hh2)]
+            return [rot(cx + px, cy + py) for px, py in pts]
+
+        arcade.draw_polygon_filled(rot_rect(-6, 6, 7, 9),  C_TARDIS_LIGHT)
+        arcade.draw_polygon_filled(rot_rect( 6, 6, 7, 9),  C_TARDIS_LIGHT)
+
+        # Centre panel line
+        p1 = rot(0, -hh + 4)
+        p2 = rot(0,  hh - 12)
+        arcade.draw_line(p1[0], p1[1], p2[0], p2[1], C_TARDIS_LIGHT, 1)
+
+        # Lamp post on top
+        lamp_base = rot(0, hh + 5)
+        lamp_top  = rot(0, hh + 14)
+        arcade.draw_line(lamp_base[0], lamp_base[1],
+                         lamp_top[0],  lamp_top[1], C_TARDIS_LIGHT, 3)
+        arcade.draw_circle_filled(lamp_top[0], lamp_top[1], 4, (220, 240, 255))
 
     def rect(self):
+        # Collision box stays axis-aligned regardless of visual rotation
         return (self.x - self.W // 2, self.y - self.H // 2,
                 self.x + self.W // 2, self.y + self.H // 2)
 
