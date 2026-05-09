@@ -651,10 +651,10 @@ class CybermanUnit:
 
         # Cyberman body — angular, robotic
         body_pts = [
-            sx - w * 0.4, sy - h * 0.5,
-            sx + w * 0.4, sy - h * 0.5,
-            sx + w * 0.3, sy + h * 0.2,
-            sx - w * 0.3, sy + h * 0.2,
+            (sx - w * 0.4, sy - h * 0.5),
+            (sx + w * 0.4, sy - h * 0.5),
+            (sx + w * 0.3, sy + h * 0.2),
+            (sx - w * 0.3, sy + h * 0.2),
         ]
         arcade.draw_polygon_filled(body_pts, c(C_CYBER_SILVER))
         arcade.draw_polygon_outline(body_pts, c(C_CYBER_DARK), max(1, int(2*s)))
@@ -849,6 +849,9 @@ class Pickup:
         self.age   = 0
         self.vx    = random.uniform(-1.2, 1.2)
         self.vy    = random.uniform(-1.2, 1.2)
+        self.text  = arcade.Text(self.LABELS[self.kind], self.sx, self.sy - 5,
+                                 C_WHITE, 10, anchor_x="center",
+                                 font_name="Courier New", bold=True)
  
     COLOURS = {"life": C_DROP_LIFE, "pierce": C_DROP_PIERCE, "fire": C_DROP_FIRE}
     LABELS  = {"life": "+", "pierce": "P", "fire": "F"}
@@ -879,8 +882,9 @@ class Pickup:
         r = int(self.R * pulse)
         arcade.draw_circle_filled(self.sx, self.sy, r + 3, (255, 255, 255, 60))
         arcade.draw_circle_filled(self.sx, self.sy, r,     col)
-        arcade.draw_text(self.LABELS[self.kind], self.sx, self.sy - 5,
-                         C_WHITE, 10, anchor_x="center", font_name="Courier New", bold=True)
+        self.text.x = self.sx
+        self.text.y = self.sy - 5
+        self.text.draw()
  
     def rect(self):
         return (self.sx - self.R, self.sy - self.R,
@@ -1198,7 +1202,7 @@ class GameWindow(arcade.Window):
         self.shoot_cd -= dt
         if arcade.key.SPACE in self.keys_held and self.shoot_cd <= 0:
             self.bullets.append(Bullet(self.player.x, self.player.y))
-            self.shoot_cd = max(0.06, 0.18 - self.stat_fire * 0.02)
+            self.shoot_cd = max(0.06, 0.30 - self.stat_fire * 0.02)
  
         for b in self.bullets: b.update()
         self.bullets = [b for b in self.bullets if b.alive]
@@ -1308,7 +1312,7 @@ class GameWindow(arcade.Window):
                     self.wave_kills += 1
                     self.particles  += explode(e.sx, e.sy,
                         [C_DALEK_GOLD, C_DALEK_DARK, (255, 200, 50), C_WHITE])
-                    if random.random() < 0.18:   # 18% drop rate
+                    if random.random() < 0.09:   # 9% drop rate
                         self.pickups.append(Pickup(e.sx, e.sy, "life"))
                     break
  
@@ -1324,7 +1328,7 @@ class GameWindow(arcade.Window):
                     self.wave_kills += 1
                     self.particles  += explode(d.sx, d.sy,
                         [C_DALEK_GOLD, C_RED, (255, 160, 20), C_WHITE])
-                    if random.random() < 0.22:   # 22% drop rate
+                    if random.random() < 0.11:   # 11% drop rate
                         self.pickups.append(Pickup(d.sx, d.sy, "pierce"))
                     break
  
@@ -1340,7 +1344,7 @@ class GameWindow(arcade.Window):
                     self.wave_kills += 1
                     self.particles  += explode(cy.sx, cy.sy,
                         [C_CYBER_SILVER, C_CYBER_GLOW, C_CYBER_DARK, C_WHITE])
-                    if random.random() < 0.30:   # 30% drop rate
+                    if random.random() < 0.15:   # 15% drop rate
                         self.pickups.append(Pickup(cy.sx, cy.sy, "fire"))
                     break
 
@@ -1356,22 +1360,16 @@ class GameWindow(arcade.Window):
                     self.wave_kills += 1
                     self.particles  += explode(cu.sx, cu.sy,
                         [C_CYBER_SILVER, C_CYBER_GLOW, C_CYBER_DARK, C_WHITE])
-                    if random.random() < 0.25:   # 25% drop rate
+                    if random.random() < 0.12:   # 12% drop rate
                         self.pickups.append(Pickup(cu.sx, cu.sy, "fire"))
                     break
  
-        # Bullet ↔ angel — angels can be stunned briefly but not killed
+        # Bullet ↔ angel — angels are immune to bullets
         for b in self.bullets[:]:
             for ang in self.angels[:]:
                 if b.alive and ang.alive and rects_overlap(b.rect(), ang.rect()):
-                    pierce_roll = random.random() < self.stat_pierce * 0.10
-                    if not pierce_roll:
-                        b.alive = False
-                    # Angels are quantum-locked by the hit flash — no kill
-                    ang.frozen = True
-                    ang.patrol_cd = max(ang.patrol_cd, 1.5)
-                    self.particles += explode(ang.sx, ang.sy,
-                        [C_ANGEL_STONE, C_ANGEL_GLOW, C_WHITE], n=12)
+                    # Angels are immune — bullets are destroyed but angels are unaffected
+                    b.alive = False
                     break
  
         # Enemy ↔ player (collision)
@@ -1386,7 +1384,7 @@ class GameWindow(arcade.Window):
                     if self.lives <= 0:
                         self.state = "game_over"
                     else:
-                        self.player.invuln = 120
+                        self.player.invuln = 75
                         self.flash("REGENERATING...", 2.0, C_TEXT_GOLD)
                     break
  
@@ -1402,7 +1400,7 @@ class GameWindow(arcade.Window):
                     if self.lives <= 0:
                         self.state = "game_over"
                     else:
-                        self.player.invuln = 120
+                        self.player.invuln = 75
                         self.flash("REGENERATING...", 2.0, C_TEXT_GOLD)
                     break
  
@@ -1418,7 +1416,7 @@ class GameWindow(arcade.Window):
                     if self.lives <= 0:
                         self.state = "game_over"
                     else:
-                        self.player.invuln = 120
+                        self.player.invuln = 75
                         self.flash("REGENERATING...", 2.0, C_TEXT_GOLD)
                     break
  
@@ -1434,7 +1432,7 @@ class GameWindow(arcade.Window):
                     if self.lives <= 0:
                         self.state = "game_over"
                     else:
-                        self.player.invuln = 120
+                        self.player.invuln = 75
                         self.flash("REGENERATING...", 2.0, C_TEXT_GOLD)
                     break
 
@@ -1450,7 +1448,7 @@ class GameWindow(arcade.Window):
                     if self.lives <= 0:
                         self.state = "game_over"
                     else:
-                        self.player.invuln = 120
+                        self.player.invuln = 75
                         self.flash("REGENERATING...", 2.0, C_TEXT_GOLD)
                     break
  
@@ -1466,7 +1464,7 @@ class GameWindow(arcade.Window):
                     if self.lives <= 0:
                         self.state = "game_over"
                     else:
-                        self.player.invuln = 120
+                        self.player.invuln = 75
                         # Time vortex jump: random level 1-200
                         old_wave = self.wave
                         self.wave = random.randint(1, 200)
