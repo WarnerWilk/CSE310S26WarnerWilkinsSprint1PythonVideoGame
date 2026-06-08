@@ -22,7 +22,7 @@ SCREEN_H = 700
 TITLE    = "TARDIS VOID"
  
 # ── Gameplay constants ────────────────────────────────────────────────────────
-PLAYER_SPEED         = 5
+PLAYER_SPEED         = 3
 BULLET_SPEED         = 10
 ENEMY_BASE_SPEED     = 1.2
 ENEMY_SPAWN_INTERVAL = 1.8
@@ -175,6 +175,24 @@ def bake_procedural_textures():
     d.ellipse([1, 1, 15, 15], fill=C_CYBER_GLOW)
     d.ellipse([4, 4, 12, 12], fill=C_WHITE)
     cache["enemy_bullet_cyan"] = arcade.Texture(img)
+
+    # 10. Sontaran Battle Pod
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    # Base hull
+    d.ellipse([4, 4, 60, 60], fill=(130, 110, 90), outline=(80, 70, 60), width=2)
+    # Front Visor (Facing Right = 0 degrees in Arcade)
+    d.polygon([(44, 16), (44, 48), (56, 40), (56, 24)], fill=(255, 180, 0))
+    # Probic Vent (Back/Left)
+    d.ellipse([2, 26, 14, 38], fill=(255, 255, 255), outline=(0, 200, 255), width=2)
+    cache["sontaran"] = arcade.Texture(img)
+
+    # 11. Sontaran Yellow Laser
+    img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse([1, 1, 15, 15], fill=(255, 150, 0))
+    d.ellipse([4, 4, 12, 12], fill=C_WHITE)
+    cache["enemy_bullet_yellow"] = arcade.Texture(img)
 
     # 8. Modifiers / Pickups
     for kind, col in [("life", C_DROP_LIFE), ("pierce", C_DROP_PIERCE), ("fire", C_DROP_FIRE)]:
@@ -745,6 +763,11 @@ class GameWindow(arcade.Window):
         self.blink_duration  = 0.2
         self.blink_cooldown  = 2.0
         self._last_faction   = ""
+        self.demat_charges = 0
+        self.demat_earned  = 0
+        self.demat_active  = False
+        self.demat_timer   = 0.0
+
 
     def on_key_press(self, key, mod):
         self.keys_held.add(key)
@@ -753,14 +776,48 @@ class GameWindow(arcade.Window):
         if self.state == "game_over" and key == arcade.key.R:
             self._init_scene();  self.state = "playing"
 
+        if self.state == "playing" and key in (arcade.key.LSHIFT, arcade.key.RSHIFT):
+            if self.demat_charges > 0 and not self.demat_active:
+                self.demat_charges -= 1
+                self.demat_active = True
+                self.demat_timer = 2.0
+                self.flash("DEMATERIALIZING...", 1.0, C_TARDIS_LIGHT)
+
     def on_key_release(self, key, mod):
         self.keys_held.discard(key)
 
     def on_update(self, dt):
         self.elapsed += dt
+        if self.state != "playing": return
+
+        # 1. CHECK FOR NEW DEMAT CHARGES (1 per 1000 points)
+        earned = self.score // 2000
+        if earned > self.demat_earned:
+            self.demat_charges += (earned - self.demat_earned)
+            self.demat_earned = earned
+            self.flash("DEMAT JUMP READY [SHIFT]", 1.5, C_TARDIS_LIGHT)
+
+        # 2. PLAYER MOVEMENT ALWAYS RUNS
+        dx = dy = 0
+        if arcade.key.LEFT  in self.keys_held or arcade.key.A in self.keys_held: dx -= PLAYER_SPEED
+        if arcade.key.RIGHT in self.keys_held or arcade.key.D in self.keys_held: dx += PLAYER_SPEED
+        if arcade.key.UP    in self.keys_held or arcade.key.W in self.keys_held: dy += PLAYER_SPEED
+        if arcade.key.DOWN  in self.keys_held or arcade.key.S in self.keys_held: dy -= PLAYER_SPEED
+        self.player.dx, self.player.dy = dx, dy
+        self.player.update()
+
+        # 3. TIME FREEZE WALL
+        if self.demat_active:
+            self.demat_timer -= dt
+            if self.demat_timer <= 0:
+                self.demat_active = False
+                self.flash("REMATERIALIZED", 1.0, C_TARDIS_LIGHT)
+            if self.flash_timer > 0: self.flash_timer -= dt
+            return # <--- EVERYTHING BELOW THIS IS FROZEN
+
+        # 4. NORMAL ENVIRONMENT & ENEMY UPDATES
         for s in self.stars:   s.update()
         for v in self.vortex:  v.update()
-        if self.state != "playing": return
 
         faction = faction_for_wave(self.wave)
         if faction != self._last_faction:
@@ -1043,6 +1100,10 @@ class GameWindow(arcade.Window):
         
         batch_draw_list.draw()
 
+        if self.demat_active:
+            draw_overlay(140)  # Darkens the frozen world
+            arcade.draw_text(f"TIME FROZEN: {self.demat_timer:.1f}s", SCREEN_W//2, SCREEN_H - 70, C_TARDIS_LIGHT, 16, anchor_x="center", font_name="Courier New", bold=True)
+
         # Draw the main cockpit avatar over the workspace layer
         if not (self.player.invuln > 0 and (self.player.invuln // 4) % 2 == 0):
             self.player.draw()
@@ -1068,6 +1129,8 @@ class GameWindow(arcade.Window):
 
         if self.stat_pierce > 0: arcade.draw_text(f"PIERCE x{self.stat_pierce}", 14, 14, C_DROP_PIERCE, 13, font_name="Courier New", bold=True)
         if self.stat_fire > 0: arcade.draw_text(f"FIRE +{self.stat_fire}", 14, 30, C_DROP_FIRE, 13, font_name="Courier New", bold=True)
+        if self.demat_charges > 0: 
+            arcade.draw_text(f"DEMAT JUMP [SHIFT]: {self.demat_charges}", 14, 46, C_TARDIS_LIGHT, 13, font_name="Courier New", bold=True)
         
         if faction in ("angels", "mixed") and self.darkness_level > 0:
             bar_w = 120; filled = int(bar_w * (1.0 - self.darkness_level))
